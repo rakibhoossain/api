@@ -14,11 +14,17 @@ import (
 	"github.com/openpanel-dev/openpanel-api/internal/cron"
 	"github.com/openpanel-dev/openpanel-api/internal/handlers"
 	"github.com/openpanel-dev/openpanel-api/internal/repository"
+	"github.com/openpanel-dev/openpanel-api/internal/services"
 )
 
 func main() {
 	log.Println("Initializing specific Configuration...")
 	cfg := config.LoadConfig()
+
+	log.Println("Initializing UA Parser...")
+	if err := services.InitUAParser(); err != nil {
+		log.Printf("Warning: Failed to initialize UA parser: %v", err)
+	}
 
 	log.Println("Connecting to Postgres...")
 	pgRepo, err := repository.NewPostgresRepo(cfg.PostgresURL)

@@ -41,6 +41,16 @@ type GeoLocation struct {
 	Longitude float64 `json:"longitude,omitempty"`
 }
 
+type UAInfo struct {
+	OS             string
+	OSVersion      string
+	Browser        string
+	BrowserVersion string
+	Device         string
+	Brand          string
+	Model          string
+}
+
 type IdentifyPayload struct {
 	ProfileID  interface{}            `json:"profileId" validate:"required"`
 	FirstName  string                 `json:"firstName,omitempty"`

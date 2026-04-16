@@ -10,6 +10,7 @@ import (
 	"time"
 	"github.com/openpanel-dev/openpanel-api/internal/models"
 	"github.com/openpanel-dev/openpanel-api/internal/repository"
+	"github.com/openpanel-dev/openpanel-api/internal/services"
 )
 
 type EventBuffer struct {
@@ -96,11 +97,9 @@ func (b *EventBuffer) TryFlush() error {
 			lon = &l2
 		}
 
-		// Headers mapping
-		headers := make(map[string]string)
-		if h, ok := m["headers"].(map[string]string); ok {
-			headers = h
-		}
+		// UA mapping
+		ua := strOrEmpty(m, "ua")
+		uaInfo := services.GetUAInfo(ua)
 
 		// Prepare strongly typed struct matching clickhouse schema expectations
 		eventModel := models.Event{
@@ -124,10 +123,13 @@ func (b *EventBuffer) TryFlush() error {
 			Region:         geo.Region,
 			Latitude:       lat,
 			Longitude:      lon,
-			OS:             headers["os"], // Placeholder if not parsed yet
-			Browser:        headers["browser"],
-			BrowserVersion: headers["browser_version"],
-			OSVersion:      headers["os_version"],
+			OS:             uaInfo.OS,
+			Browser:        uaInfo.Browser,
+			BrowserVersion: uaInfo.BrowserVersion,
+			OSVersion:      uaInfo.OSVersion,
+			Device:         uaInfo.Device,
+			Brand:          uaInfo.Brand,
+			Model:          uaInfo.Model,
 			NetworkOrg:     strOrEmpty(m, "network_org"),
 		}
 
