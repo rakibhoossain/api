@@ -1,13 +1,21 @@
 package buffers
 
-import "log"
+import (
+	"log"
+
+	"github.com/openpanel-dev/openpanel-api/internal/repository"
+)
 
 type ProfileBackfillBuffer struct {
 	*GenericBuffer
+	ch *repository.ClickhouseRepo
 }
 
-func NewProfileBackfillBuffer() *ProfileBackfillBuffer {
-	return &ProfileBackfillBuffer{GenericBuffer: NewGenericBuffer("ProfileBackfillBuffer")}
+func NewProfileBackfillBuffer(ch *repository.ClickhouseRepo) *ProfileBackfillBuffer {
+	return &ProfileBackfillBuffer{
+		GenericBuffer: NewGenericBuffer("ProfileBackfillBuffer"),
+		ch:            ch,
+	}
 }
 
 func (b *ProfileBackfillBuffer) TryFlush() error {

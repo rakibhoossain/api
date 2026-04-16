@@ -27,13 +27,13 @@ func main() {
 	}
 
 	log.Println("Connecting to Clickhouse...")
-	_, err = repository.NewClickhouseRepo(cfg.ClickhouseURL)
+	chRepo, err := repository.NewClickhouseRepo(cfg.ClickhouseURL)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to clickhouse: %v", err)
 	}
 
 	log.Println("Initializing Buffers...")
-	b := buffers.InitBuffers()
+	b := buffers.InitBuffers(chRepo)
 
 	log.Println("Initializing Asynq Cron & Workers...")
 	cronManager := cron.NewManager(cfg, b)
