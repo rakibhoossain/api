@@ -30,6 +30,15 @@ type TrackPayload struct {
 	Properties map[string]interface{} `json:"properties,omitempty"`
 	ProfileID  interface{}            `json:"profileId,omitempty"`
 	Groups     []string               `json:"groups,omitempty"`
+	Timestamp  string                 `json:"timestamp,omitempty"`
+}
+
+type GeoLocation struct {
+	Country   string  `json:"country,omitempty"`
+	City      string  `json:"city,omitempty"`
+	Region    string  `json:"region,omitempty"`
+	Latitude  float64 `json:"latitude,omitempty"`
+	Longitude float64 `json:"longitude,omitempty"`
 }
 
 type IdentifyPayload struct {

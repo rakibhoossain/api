@@ -6,6 +6,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/openpanel-dev/openpanel-api/internal/buffers"
 	"github.com/openpanel-dev/openpanel-api/internal/config"
+	"github.com/openpanel-dev/openpanel-api/internal/repository"
 	"github.com/openpanel-dev/openpanel-api/internal/tasks"
 )
 
@@ -14,9 +15,10 @@ type Manager struct {
 	scheduler *asynq.Scheduler
 	mux       *asynq.ServeMux
 	b         *buffers.Buffers
+	pg        *repository.PostgresRepo
 }
 
-func NewManager(cfg *config.Config, b *buffers.Buffers) *Manager {
+func NewManager(cfg *config.Config, b *buffers.Buffers, pg *repository.PostgresRepo) *Manager {
 	redisConnOpt := asynq.RedisClientOpt{
 		Addr: cfg.RedisHost + ":" + cfg.RedisPort,
 	}
@@ -38,6 +40,7 @@ func NewManager(cfg *config.Config, b *buffers.Buffers) *Manager {
 		scheduler: scheduler,
 		mux:       mux,
 		b:         b,
+		pg:        pg,
 	}
 }
 
@@ -48,7 +51,7 @@ func (m *Manager) Start() {
 	m.mux.HandleFunc(tasks.TypeFlushSessions, tasks.HandleFlushSessionsTask(m.b))
 	m.mux.HandleFunc(tasks.TypeFlushProfileBackfill, tasks.HandleFlushProfileBackfillTask(m.b))
 	m.mux.HandleFunc(tasks.TypeFlushReplay, tasks.HandleFlushReplayTask(m.b))
-	m.mux.HandleFunc(tasks.TypeSalt, tasks.HandleSaltTask())
+	m.mux.HandleFunc(tasks.TypeSalt, tasks.HandleSaltTask(m.pg))
 
 	// Register cron jobs to run e.g. every minute
 	if _, err := m.scheduler.Register("* * * * *", asynq.NewTask(tasks.TypeFlushEvents, nil)); err != nil {

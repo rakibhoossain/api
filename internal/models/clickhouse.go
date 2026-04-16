@@ -82,7 +82,7 @@ type Event struct {
 	Referrer       string                 `json:"referrer"`
 	ReferrerName   string                 `json:"referrer_name"`
 	ReferrerType   string                 `json:"referrer_type"`
-	Revenue        uint64                 `json:"revenue"`
+	Revenue        float64                `json:"revenue"`
 	Duration       uint64                 `json:"duration"`
 	Properties     map[string]interface{} `json:"properties"`
 	CreatedAt      time.Time              `json:"created_at"`

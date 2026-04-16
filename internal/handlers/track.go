@@ -119,6 +119,8 @@ func (a *API) handleTrack(w http.ResponseWriter, r *http.Request) {
 			"deviceId":  deviceId,
 			"sessionId": sessionId,
 			"geo":       geo,
+			"ua":        ua,
+			"headers":   getStringHeaders(r),
 			"event":     p,
 		})
 

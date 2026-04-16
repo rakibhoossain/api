@@ -21,7 +21,7 @@ func main() {
 	cfg := config.LoadConfig()
 
 	log.Println("Connecting to Postgres...")
-	_, err := repository.NewPostgresRepo(cfg.PostgresURL)
+	pgRepo, err := repository.NewPostgresRepo(cfg.PostgresURL)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to pg: %v", err)
 	}
@@ -36,7 +36,7 @@ func main() {
 	b := buffers.InitBuffers(chRepo)
 
 	log.Println("Initializing Asynq Cron & Workers...")
-	cronManager := cron.NewManager(cfg, b)
+	cronManager := cron.NewManager(cfg, b, pgRepo)
 	cronManager.Start()
 
 	api := handlers.NewAPI(b)

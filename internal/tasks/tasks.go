@@ -7,6 +7,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/openpanel-dev/openpanel-api/internal/buffers"
+	"github.com/openpanel-dev/openpanel-api/internal/repository"
 )
 
 const (
@@ -67,10 +68,9 @@ func HandleFlushReplayTask(b *buffers.Buffers) func(context.Context, *asynq.Task
 	}
 }
 
-func HandleSaltTask() func(context.Context, *asynq.Task) error {
+func HandleSaltTask(pg *repository.PostgresRepo) func(context.Context, *asynq.Task) error {
 	return func(ctx context.Context, t *asynq.Task) error {
 		log.Println("Handling salt rotation...")
-		// Logic to rotate salts in pg
-		return nil
+		return pg.RotateSalts(ctx)
 	}
 }

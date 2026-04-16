@@ -7,16 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openpanel-dev/openpanel-api/internal/models"
 	"github.com/oschwald/geoip2-golang"
 )
 
-type GeoLocation struct {
-	Country   string  `json:"country,omitempty"`
-	City      string  `json:"city,omitempty"`
-	Region    string  `json:"region,omitempty"`
-	Latitude  float64 `json:"latitude,omitempty"`
-	Longitude float64 `json:"longitude,omitempty"`
-}
+// GeoLocation is now in models package
 
 var (
 	cityReader *geoip2.Reader
@@ -49,8 +44,8 @@ func CloseGeoIP() {
 	}
 }
 
-func GetGeoLocation(ipStr string) GeoLocation {
-	var geo GeoLocation
+func GetGeoLocation(ipStr string) models.GeoLocation {
+	var geo models.GeoLocation
 	if cityReader == nil || ipStr == "" {
 		return geo
 	}
