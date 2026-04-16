@@ -15,6 +15,9 @@ services:
       - POSTGRES_DB=openpanel
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - DB_GEOIP_PATH=/usr/share/GeoIP
+    volumes:
+      - geoip_data:/usr/share/GeoIP:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -23,23 +26,17 @@ services:
     networks:
       - openpanel
 
-#   # Legacy Node.js API (port 3333)
-#   api-legacy:
-#     build:
-#       context: ../.
-#       dockerfile: apps/api/Dockerfile
-#     ports:
-#       - "3333:3333"
-#     environment:
-#       - NODE_ENV=development
-#       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/openpanel
-#       - REDIS_HOST=redis
-#       - REDIS_PORT=6379
-#     depends_on:
-#       postgres:
-#         condition: service_healthy
-#     networks:
-#       - openpanel
+  geoipupdate:
+    image: maxmindinc/geoipupdate:latest
+    env_file:
+      - .env
+    environment:
+      GEOIPUPDATE_EDITION_IDS: GeoLite2-City GeoLite2-ASN
+      GEOIPUPDATE_FREQUENCY: 12
+      GEOIPUPDATE_DATABASE_DIRECTORY: /usr/share/GeoIP
+    volumes:
+      - geoip_data:/usr/share/GeoIP
+    restart: unless-stopped
 
   postgres:
     image: postgres:15-alpine
@@ -92,6 +89,7 @@ services:
 volumes:
   postgres_data:
   clickhouse_data:
+  geoip_data:
 
 networks:
   openpanel:

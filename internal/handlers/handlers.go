@@ -42,23 +42,8 @@ func (a *API) setupRoutes() {
 	a.router.HandleFunc("/live", websocket.HandleLiveConnect)
 }
 
-func (a *API) handleEvent(w http.ResponseWriter, r *http.Request) {
-	// Add event to buffer logic
-	a.buffers.EventBuffer.Add(map[string]string{"type": "event_payload"})
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
 
-func (a *API) handleProfile(w http.ResponseWriter, r *http.Request) {
-	a.buffers.ProfileBuffer.Add(map[string]string{"type": "profile_payload"})
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
 
-func (a *API) handleTrack(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
 
 func (a *API) handleAI(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
