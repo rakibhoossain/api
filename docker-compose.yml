@@ -1,0 +1,98 @@
+services:
+  # New Go Analytics API (port 3334)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3334:3334"
+    environment:
+      - API_SERVER_PORT=3334
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=openpanel
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - openpanel
+
+#   # Legacy Node.js API (port 3333)
+#   api-legacy:
+#     build:
+#       context: ../.
+#       dockerfile: apps/api/Dockerfile
+#     ports:
+#       - "3333:3333"
+#     environment:
+#       - NODE_ENV=development
+#       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/openpanel
+#       - REDIS_HOST=redis
+#       - REDIS_PORT=6379
+#     depends_on:
+#       postgres:
+#         condition: service_healthy
+#     networks:
+#       - openpanel
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: openpanel
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../schema/postgres_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - openpanel
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    networks:
+      - openpanel
+    command: redis-server --notify-keyspace-events Ex
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8-alpine
+    ports:
+      - "8124:8123"
+      - "9001:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ../schema/clickhouse_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - openpanel
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+
+networks:
+  openpanel:
+    driver: bridge
