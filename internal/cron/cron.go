@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 	"github.com/openpanel-dev/openpanel-api/internal/buffers"
 	"github.com/openpanel-dev/openpanel-api/internal/config"
 	"github.com/openpanel-dev/openpanel-api/internal/repository"
@@ -16,9 +17,10 @@ type Manager struct {
 	mux       *asynq.ServeMux
 	b         *buffers.Buffers
 	pg        *repository.PostgresRepo
+	rdb       *redis.Client
 }
 
-func NewManager(cfg *config.Config, b *buffers.Buffers, pg *repository.PostgresRepo) *Manager {
+func NewManager(cfg *config.Config, b *buffers.Buffers, pg *repository.PostgresRepo, rdb *redis.Client) *Manager {
 	redisConnOpt := asynq.RedisClientOpt{
 		Addr: cfg.RedisHost + ":" + cfg.RedisPort,
 	}
@@ -41,6 +43,7 @@ func NewManager(cfg *config.Config, b *buffers.Buffers, pg *repository.PostgresR
 		mux:       mux,
 		b:         b,
 		pg:        pg,
+		rdb:       rdb,
 	}
 }
 
@@ -52,6 +55,7 @@ func (m *Manager) Start() {
 	m.mux.HandleFunc(tasks.TypeFlushProfileBackfill, tasks.HandleFlushProfileBackfillTask(m.b))
 	m.mux.HandleFunc(tasks.TypeFlushReplay, tasks.HandleFlushReplayTask(m.b))
 	m.mux.HandleFunc(tasks.TypeSalt, tasks.HandleSaltTask(m.pg))
+	m.mux.HandleFunc(tasks.TypeSessionEnd, tasks.HandleSessionEndTask(m.b, m.rdb))
 
 	// Register cron jobs to run e.g. every minute
 	if _, err := m.scheduler.Register("* * * * *", asynq.NewTask(tasks.TypeFlushEvents, nil)); err != nil {
@@ -63,7 +67,6 @@ func (m *Manager) Start() {
 	if _, err := m.scheduler.Register("* * * * *", asynq.NewTask(tasks.TypeFlushSessions, nil)); err != nil {
 		log.Printf("Scheduler error sessions: %v", err)
 	}
-	// Add other cron registrations here similarly ...
 
 	go func() {
 		log.Println("Starting Asynq worker server")

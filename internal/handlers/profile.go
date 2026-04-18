@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/openpanel-dev/openpanel-api/internal/enrich"
 	"github.com/openpanel-dev/openpanel-api/internal/models"
-	"github.com/openpanel-dev/openpanel-api/internal/services"
 )
 
 func (a *API) handleProfile(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +32,7 @@ func (a *API) handleProfile(w http.ResponseWriter, r *http.Request) {
 		ip = strings.Split(r.RemoteAddr, ":")[0]
 	}
 
-	geo := services.GetGeoLocation(ip)
+	geo := enrich.GetGeoLocation(ip)
 
 	// Enrich payload properly
 	if body.Properties == nil {

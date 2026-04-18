@@ -8,10 +8,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/openpanel-dev/openpanel-api/internal/buffers"
 	"github.com/openpanel-dev/openpanel-api/internal/config"
 	"github.com/openpanel-dev/openpanel-api/internal/cron"
+	"github.com/openpanel-dev/openpanel-api/internal/enrich"
 	"github.com/openpanel-dev/openpanel-api/internal/handlers"
 	"github.com/openpanel-dev/openpanel-api/internal/repository"
 	"github.com/openpanel-dev/openpanel-api/internal/services"
@@ -22,9 +25,15 @@ func main() {
 	cfg := config.LoadConfig()
 
 	log.Println("Initializing UA Parser...")
-	if err := services.InitUAParser(); err != nil {
+	if err := enrich.InitUAParser(); err != nil {
 		log.Printf("Warning: Failed to initialize UA parser: %v", err)
 	}
+
+	log.Println("Connecting to Redis...")
+	redisAddr := cfg.RedisHost + ":" + cfg.RedisPort
+	rdb := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
 
 	log.Println("Connecting to Postgres...")
 	pgRepo, err := repository.NewPostgresRepo(cfg.PostgresURL)
@@ -39,13 +48,20 @@ func main() {
 	}
 
 	log.Println("Initializing Buffers...")
-	b := buffers.InitBuffers(chRepo)
+	b := buffers.InitBuffers(chRepo, rdb)
+
+	log.Println("Initializing Asynq Clients...")
+	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: redisAddr})
+	defer asynqClient.Close()
+
+	log.Println("Initializing Ingestion Service...")
+	ingestionService := services.NewIngestionService(pgRepo, asynqClient, rdb, b)
 
 	log.Println("Initializing Asynq Cron & Workers...")
-	cronManager := cron.NewManager(cfg, b, pgRepo)
+	cronManager := cron.NewManager(cfg, b, pgRepo, rdb)
 	cronManager.Start()
 
-	api := handlers.NewAPI(b)
+	api := handlers.NewAPI(b, ingestionService)
 	
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

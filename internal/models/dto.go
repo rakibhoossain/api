@@ -34,11 +34,12 @@ type TrackPayload struct {
 }
 
 type GeoLocation struct {
-	Country   string  `json:"country,omitempty"`
-	City      string  `json:"city,omitempty"`
-	Region    string  `json:"region,omitempty"`
-	Latitude  float64 `json:"latitude,omitempty"`
-	Longitude float64 `json:"longitude,omitempty"`
+	Country    string  `json:"country,omitempty"`
+	City       string  `json:"city,omitempty"`
+	Region     string  `json:"region,omitempty"`
+	Latitude   float64 `json:"latitude,omitempty"`
+	Longitude  float64 `json:"longitude,omitempty"`
+	NetworkOrg string  `json:"network_org,omitempty"`
 }
 
 type UAInfo struct {

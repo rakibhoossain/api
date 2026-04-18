@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/openpanel-dev/openpanel-api/internal/models"
-	"github.com/openpanel-dev/openpanel-api/internal/services"
 )
 
 // Extract headers similar to TS `getStringHeaders`
@@ -21,28 +19,6 @@ func getStringHeaders(r *http.Request) map[string]string {
 		}
 	}
 	return headers
-}
-
-func getIdentity(payload models.TrackHandlerPayload) (*models.IdentifyPayload, string) {
-	if payload.Type == "track" {
-		var track models.TrackPayload
-		if err := json.Unmarshal(payload.Payload, &track); err == nil {
-			if identifyVal, ok := track.Properties["__identify"]; ok {
-				identBytes, err := json.Marshal(identifyVal)
-				if err == nil {
-					var identity models.IdentifyPayload
-					if err := json.Unmarshal(identBytes, &identity); err == nil {
-						return &identity, models.ConvertProfileID(identity.ProfileID)
-					}
-				}
-			}
-			profId := models.ConvertProfileID(track.ProfileID)
-			if profId != "" {
-				return &models.IdentifyPayload{ProfileID: profId}, profId
-			}
-		}
-	}
-	return nil, ""
 }
 
 func (a *API) handleTrack(w http.ResponseWriter, r *http.Request) {
@@ -65,8 +41,6 @@ func (a *API) handleTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// projectId usually attached via middleware client identification. 
-	// Assuming it's in header or context for now.
 	projectId := r.Header.Get("x-project-id") 
 	if projectId == "" {
 		http.Error(w, "missing projectId", http.StatusBadRequest)
@@ -82,47 +56,21 @@ func (a *API) handleTrack(w http.ResponseWriter, r *http.Request) {
 		ua = "unknown/1.0"
 	}
 
-	// Salts hardcoded fallback initially, replaced by Postgres query once repo injected
-	saltCurrent := "saltX"
+	var deviceId, sessionId string
 
-	overrideDeviceId := ""
-	if body.Type == "track" {
-		var track models.TrackPayload
-		if json.Unmarshal(body.Payload, &track) == nil {
-			if ipOverride, ok := track.Properties["__ip"].(string); ok && ipOverride != "" {
-				ip = ipOverride
-			}
-			if devIdOverride, ok := track.Properties["__deviceId"].(string); ok && devIdOverride != "" {
-				overrideDeviceId = devIdOverride
-			}
-		}
-	}
-
-	geo := services.GetGeoLocation(ip)
-
-	deviceId := overrideDeviceId
-	sessionId := ""
-	if deviceId == "" {
-		deviceId = services.GenerateDeviceID(saltCurrent, projectId, ip, ua)
-		sessionId = services.GetSessionID(projectId, deviceId, time.Now().UnixMilli(), 1000*60*30, 1000*60)
-	}
-
-	// Dispatch logic based on Type
+	// Handle different types using the new IngestionService where applicable
 	switch body.Type {
 	case "track":
 		var p models.TrackPayload
 		json.Unmarshal(body.Payload, &p)
 		
-		// Event Buffer
-		a.buffers.EventBuffer.Add(map[string]interface{}{
-			"projectId": projectId,
-			"deviceId":  deviceId,
-			"sessionId": sessionId,
-			"geo":       geo,
-			"ua":        ua,
-			"headers":   getStringHeaders(r),
-			"event":     p,
-		})
+		res, err := a.ingestion.ProcessEvent(r.Context(), projectId, ip, ua, p, getStringHeaders(r))
+		if err != nil {
+			http.Error(w, "ingestion error", http.StatusInternalServerError)
+			return
+		}
+		deviceId = res.DeviceID
+		sessionId = res.SessionID
 
 	case "identify":
 		var p models.IdentifyPayload
@@ -132,7 +80,7 @@ func (a *API) handleTrack(w http.ResponseWriter, r *http.Request) {
 	case "increment":
 		var p models.IncrementPayload
 		json.Unmarshal(body.Payload, &p)
-		a.buffers.ProfileBuffer.Add(p) // Should dispatch to increment handler or specify intent
+		a.buffers.ProfileBuffer.Add(p)
 
 	case "decrement":
 		var p models.DecrementPayload
@@ -142,8 +90,8 @@ func (a *API) handleTrack(w http.ResponseWriter, r *http.Request) {
 	case "group":
 		var p models.GroupPayload
 		json.Unmarshal(body.Payload, &p)
-		// No group buffer yet, can drop or mock
-
+		// Mocked for now, same as original
+		
 	case "assign_group":
 		var p models.AssignGroupPayload
 		json.Unmarshal(body.Payload, &p)
@@ -151,14 +99,13 @@ func (a *API) handleTrack(w http.ResponseWriter, r *http.Request) {
 	case "replay":
 		var p models.ReplayPayload
 		json.Unmarshal(body.Payload, &p)
+		// SessionId might be missing if replay is called separately, but usually it follows track
 		a.buffers.ReplayBuffer.Add(map[string]interface{}{
 			"project_id": projectId,
-			"session_id": sessionId,
 			"payload":    p.Payload,
 		})
 	}
 
-	// Return standard 200 { deviceId, sessionId }
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{

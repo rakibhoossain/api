@@ -2,6 +2,7 @@ package buffers
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"time"
 
@@ -10,62 +11,42 @@ import (
 )
 
 type ReplayBuffer struct {
-	*GenericBuffer
+	*RedisBuffer
 	ch *repository.ClickhouseRepo
 }
 
-func NewReplayBuffer(ch *repository.ClickhouseRepo) *ReplayBuffer {
+func NewReplayBuffer(ch *repository.ClickhouseRepo, b *Buffers) *ReplayBuffer {
 	return &ReplayBuffer{
-		GenericBuffer: NewGenericBuffer("ReplayBuffer"),
-		ch:            ch,
+		RedisBuffer: NewRedisBuffer("Replay", b.rdb),
+		ch:          ch,
 	}
 }
 
 func (b *ReplayBuffer) TryFlush() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	return b.RedisBuffer.TryFlush(func(ctx context.Context, items []string) error {
+		batch, err := b.ch.Conn.PrepareBatch(ctx, "INSERT INTO session_replay_chunks")
+		if err != nil {
+			log.Printf("Failed to prepare batch for replay chunks: %v", err)
+			return err
+		}
 
-	if len(b.items) == 0 {
+		for _, item := range items {
+			var chunk models.SessionReplayChunk
+			if err := json.Unmarshal([]byte(item), &chunk); err == nil {
+				chunk.StartedAt = time.Now()
+				chunk.EndedAt = time.Now()
+				if err := batch.AppendStruct(&chunk); err != nil {
+					log.Printf("Error appending session replay chunk to batch: %v", err)
+				}
+			}
+		}
+
+		if err := batch.Send(); err != nil {
+			log.Printf("Failed to flush session replays: %v", err)
+			return err
+		}
 		return nil
-	}
-	log.Printf("Flushing %d items from %s", len(b.items), b.name)
-
-	ctx := context.Background()
-	batch, err := b.ch.Conn.PrepareBatch(ctx, "INSERT INTO session_replay_chunks")
-	if err != nil {
-		log.Printf("Failed to prepare batch for replay chunks: %v", err)
-		return err
-	}
-
-	for _, item := range b.items {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		chunk := models.SessionReplayChunk{
-			ProjectID:      strOrEmptyRep(m, "projectId"),
-			SessionID:      strOrEmptyRep(m, "sessionId"),
-			ChunkIndex:     uint16(getIntOrZero(m, "chunkIndex")),
-			StartedAt:      time.Now(),
-			EndedAt:        time.Now(),
-			EventsCount:    uint16(getIntOrZero(m, "eventsCount")),
-			IsFullSnapshot: getBoolOrFalse(m, "isFullSnapshot"),
-			Payload:        strOrEmptyRep(m, "payload"),
-		}
-
-		if err := batch.AppendStruct(&chunk); err != nil {
-			log.Printf("Error appending session replay chunk to batch: %v", err)
-		}
-	}
-
-	if err := batch.Send(); err != nil {
-		log.Printf("Failed to flush session replays: %v", err)
-		return err
-	}
-
-	b.items = make([]interface{}, 0)
-	return nil
+	})
 }
 
 func strOrEmptyRep(m map[string]interface{}, key string) string {

@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/openpanel-dev/openpanel-api/internal/models"
-	"github.com/openpanel-dev/openpanel-api/internal/services"
 )
 
 func (a *API) handleEvent(w http.ResponseWriter, r *http.Request) {
@@ -37,27 +35,19 @@ func (a *API) handleEvent(w http.ResponseWriter, r *http.Request) {
 		ua = "unknown/1.0"
 	}
 
-	geo := services.GetGeoLocation(ip)
-	saltCurrent := "saltX" // TODO: inject postgres salts
-
-	devIdOverride := ""
-	if devId, ok := body.Properties["__deviceId"].(string); ok {
-		devIdOverride = devId
+	// Convert deprecated payload to standard track payload
+	trackPayload := models.TrackPayload{
+		Name:       body.Name,
+		Properties: body.Properties,
+		ProfileID:  body.ProfileID,
+		Timestamp:  body.Timestamp,
 	}
 
-	deviceId := devIdOverride
-	if deviceId == "" {
-		deviceId = services.GenerateDeviceID(saltCurrent, projectId, ip, ua)
+	_, err := a.ingestion.ProcessEvent(r.Context(), projectId, ip, ua, trackPayload, nil)
+	if err != nil {
+		http.Error(w, "ingestion error", http.StatusInternalServerError)
+		return
 	}
-	sessionId := services.GetSessionID(projectId, deviceId, time.Now().UnixMilli(), 1000*60*30, 1000*60)
-
-	a.buffers.EventBuffer.Add(map[string]interface{}{
-		"projectId": projectId,
-		"deviceId":  deviceId,
-		"sessionId": sessionId,
-		"geo":       geo,
-		"event":     body,
-	})
 
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("ok"))

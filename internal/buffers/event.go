@@ -3,201 +3,218 @@ package buffers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
-
-	"github.com/google/uuid"
-	"strconv"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 	"github.com/openpanel-dev/openpanel-api/internal/models"
 	"github.com/openpanel-dev/openpanel-api/internal/repository"
-	"github.com/openpanel-dev/openpanel-api/internal/services"
 )
 
+const addScreenViewScript = `
+local sessionKey = KEYS[1]
+local profileKey = KEYS[2]
+local queueKey = KEYS[3]
+local counterKey = KEYS[4]
+local newEventData = ARGV[1]
+local ttl = tonumber(ARGV[2])
+
+local previousEventData = redis.call("GETDEL", sessionKey)
+redis.call("SET", sessionKey, newEventData, "EX", ttl)
+
+if profileKey and profileKey ~= "" then
+  redis.call("SET", profileKey, newEventData, "EX", ttl)
+end
+
+if previousEventData then
+  local prev = cjson.decode(previousEventData)
+  local curr = cjson.decode(newEventData)
+  
+  if prev.ts and curr.ts then
+    prev.event.duration = math.max(0, curr.ts - prev.ts)
+  end
+  
+  redis.call("RPUSH", queueKey, cjson.encode(prev.event))
+  redis.call("INCR", counterKey)
+  return 1
+end
+
+return 0
+`
+
+const addSessionEndScript = `
+local sessionKey = KEYS[1]
+local profileKey = KEYS[2]
+local queueKey = KEYS[3]
+local counterKey = KEYS[4]
+local sessionEndJson = ARGV[1]
+
+local previousEventData = redis.call("GETDEL", sessionKey)
+local added = 0
+
+if previousEventData then
+  local prev = cjson.decode(previousEventData)
+  redis.call("RPUSH", queueKey, cjson.encode(prev.event))
+  redis.call("INCR", counterKey)
+  added = added + 1
+end
+
+redis.call("RPUSH", queueKey, sessionEndJson)
+redis.call("INCR", counterKey)
+added = added + 1
+
+if profileKey and profileKey ~= "" then
+  redis.call("DEL", profileKey)
+end
+
+return added
+`
+
 type EventBuffer struct {
-	*GenericBuffer
-	ch *repository.ClickhouseRepo
+	*RedisBuffer
+	ch            *repository.ClickhouseRepo
+	screenViewSha string
+	sessionEndSha string
 }
 
-func NewEventBuffer(ch *repository.ClickhouseRepo) *EventBuffer {
-	return &EventBuffer{
-		GenericBuffer: NewGenericBuffer("EventBuffer"),
-		ch:            ch,
+func NewEventBuffer(ch *repository.ClickhouseRepo, b *Buffers) *EventBuffer {
+	eb := &EventBuffer{
+		RedisBuffer: NewRedisBuffer("Event", b.rdb),
+		ch:          ch,
+	}
+	eb.loadScripts()
+	return eb
+}
+
+func (b *EventBuffer) loadScripts() {
+	ctx := context.Background()
+	screenViewSha, err := b.rdb.ScriptLoad(ctx, addScreenViewScript).Result()
+	if err != nil {
+		log.Printf("Failed to load addScreenViewScript: %v", err)
+	} else {
+		b.screenViewSha = screenViewSha
+	}
+
+	sessionEndSha, err := b.rdb.ScriptLoad(ctx, addSessionEndScript).Result()
+	if err != nil {
+		log.Printf("Failed to load addSessionEndScript: %v", err)
+	} else {
+		b.sessionEndSha = sessionEndSha
+	}
+}
+
+// evalScript safely runs the loaded script SHA or falls back to EVAL.
+func (b *EventBuffer) evalScript(ctx context.Context, scriptName, scriptContent, sha string, keys []string, args ...interface{}) error {
+	if sha != "" {
+		res := b.rdb.EvalSha(ctx, sha, keys, args...)
+		if err := res.Err(); err != nil && err != redis.Nil {
+			// fallback check
+			// "NOSCRIPT No matching script. Please use EVAL."
+			log.Printf("Script %s failed via SHA: %v, falling back to EVAL", scriptName, err)
+			errEval := b.rdb.Eval(ctx, scriptContent, keys, args...).Err()
+			b.loadScripts()
+			return errEval
+		}
+		return nil
+	}
+	
+	err := b.rdb.Eval(ctx, scriptContent, keys, args...).Err()
+	if err != nil && err != redis.Nil {
+		b.loadScripts()
+		return err
+	}
+	return nil
+}
+
+type eventWithTs struct {
+	Event models.Event `json:"event"`
+	Ts    int64        `json:"ts"`
+}
+
+func (b *EventBuffer) AddEvent(ctx context.Context, event models.Event) {
+	eventJsonBytes, _ := json.Marshal(event)
+	eventJson := string(eventJsonBytes)
+
+	if event.SessionID != "" && event.Name == "screen_view" {
+		sessionKey := fmt.Sprintf("event_buffer:last_screen_view:session:%s", event.SessionID)
+		profileKey := ""
+		if event.ProfileID != "" {
+			profileKey = fmt.Sprintf("event_buffer:last_screen_view:profile:%s:%s", event.ProjectID, event.ProfileID)
+		}
+
+		timestamp := event.CreatedAt.UnixMilli()
+		if timestamp <= 0 {
+			timestamp = time.Now().UnixMilli()
+		}
+
+		eventWithTimestampBytes, _ := json.Marshal(eventWithTs{
+			Event: event,
+			Ts:    timestamp,
+		})
+
+		_ = b.evalScript(
+			ctx,
+			"addScreenView",
+			addScreenViewScript,
+			b.screenViewSha,
+			[]string{sessionKey, profileKey, b.redisKey, b.bufferCountKey},
+			string(eventWithTimestampBytes),
+			"3600", // 1 hour TTL
+		)
+
+	} else if event.SessionID != "" && event.Name == "session_end" {
+		sessionKey := fmt.Sprintf("event_buffer:last_screen_view:session:%s", event.SessionID)
+		profileKey := ""
+		if event.ProfileID != "" {
+			profileKey = fmt.Sprintf("event_buffer:last_screen_view:profile:%s:%s", event.ProjectID, event.ProfileID)
+		}
+
+		_ = b.evalScript(
+			ctx,
+			"addSessionEnd",
+			addSessionEndScript,
+			b.sessionEndSha,
+			[]string{sessionKey, profileKey, b.redisKey, b.bufferCountKey},
+			eventJson,
+		)
+	} else {
+		// All other events directly queue
+		pipe := b.rdb.TxPipeline()
+		pipe.RPush(ctx, b.redisKey, eventJson)
+		pipe.Incr(ctx, b.bufferCountKey)
+		_, err := pipe.Exec(ctx)
+		if err != nil {
+			log.Printf("Failed to push normal event: %v", err)
+		}
 	}
 }
 
 func (b *EventBuffer) TryFlush() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if len(b.items) == 0 {
-		return nil
-	}
-	log.Printf("Flushing %d items from %s", len(b.items), b.name)
-	ctx := context.Background()
-	batch, err := b.ch.Conn.PrepareBatch(ctx, "INSERT INTO events")
-	if err != nil {
-		log.Printf("Failed to prepare batch for events: %v", err)
-		return err
-	}
-
-	for _, item := range b.items {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
+	return b.RedisBuffer.TryFlush(func(ctx context.Context, items []string) error {
+		batch, err := b.ch.Conn.PrepareBatch(ctx, "INSERT INTO events")
+		if err != nil {
+			log.Printf("Failed to prepare batch for events: %v", err)
+			return err
 		}
 
-		// Extract TrackPayload
-		var p models.TrackPayload
-		if eventMap, ok := m["event"].(models.TrackPayload); ok {
-			p = eventMap
-		} else {
-			// Fallback if it's a map (unmarshaled from json elsewhere)
-			eventRaw, _ := json.Marshal(m["event"])
-			json.Unmarshal(eventRaw, &p)
-		}
+		for _, item := range items {
+			var eventModel models.Event
+			if err := json.Unmarshal([]byte(item), &eventModel); err != nil {
+				log.Printf("Warning: Dropping malformed JSON event payload from Redis queue")
+				continue
+			}
 
-		properties := p.Properties
-		if properties == nil {
-			properties = make(map[string]interface{})
-		}
-
-		name := p.Name
-		
-		// Revenue logic: name == "revenue" or __revenue in props
-		revenue := float64(0)
-		if name == "revenue" {
-			revenue = parseRevenue(properties["__revenue"])
-		} else if rev, ok := properties["__revenue"]; ok {
-			revenue = parseRevenue(rev)
-		}
-
-		// Duration logic
-		duration := uint64(0)
-		if dur, ok := properties["duration"]; ok {
-			duration = parseDuration(dur)
-		} else if dur, ok := properties["__duration"]; ok {
-			duration = parseDuration(dur)
-		}
-
-		// Geo mapping
-		var geo models.GeoLocation
-		if g, ok := m["geo"].(models.GeoLocation); ok {
-			geo = g
-		} else if g, ok := m["geo"].(map[string]interface{}); ok {
-			// fallback if it's a map
-			geoRaw, _ := json.Marshal(g)
-			json.Unmarshal(geoRaw, &geo)
-		}
-
-		var lat, lon *float32
-		if geo.Latitude != 0 || geo.Longitude != 0 {
-			l1 := float32(geo.Latitude)
-			l2 := float32(geo.Longitude)
-			lat = &l1
-			lon = &l2
-		}
-
-		// UA mapping
-		ua := strOrEmpty(m, "ua")
-		uaInfo := services.GetUAInfo(ua)
-
-		// Prepare strongly typed struct matching clickhouse schema expectations
-		eventModel := models.Event{
-			ID:             uuid.New(),
-			Name:           name,
-			DeviceID:       strOrEmpty(m, "deviceId"),
-			ProfileID:      models.ConvertProfileID(p.ProfileID),
-			ProjectID:      strOrEmpty(m, "projectId"),
-			SessionID:      strOrEmpty(m, "sessionId"),
-			Path:           strOrEmpty(properties, "__path"),
-			Origin:         strOrEmpty(properties, "__origin"),
-			Referrer:       strOrEmpty(properties, "__referrer"),
-			ReferrerName:   strOrEmpty(properties, "__referrer_name"),
-			ReferrerType:   strOrEmpty(properties, "__referrer_type"),
-			Revenue:        revenue,
-			Duration:       duration,
-			Properties:     properties,
-			CreatedAt:      time.Now(), // Default, check for timestamp in payload
-			Country:        geo.Country,
-			City:           geo.City,
-			Region:         geo.Region,
-			Latitude:       lat,
-			Longitude:      lon,
-			OS:             uaInfo.OS,
-			Browser:        uaInfo.Browser,
-			BrowserVersion: uaInfo.BrowserVersion,
-			OSVersion:      uaInfo.OSVersion,
-			Device:         uaInfo.Device,
-			Brand:          uaInfo.Brand,
-			Model:          uaInfo.Model,
-			NetworkOrg:     strOrEmpty(m, "network_org"),
-		}
-
-		// Check for timestamp in payload
-		if p.Timestamp != "" {
-			if t, err := time.Parse(time.RFC3339, p.Timestamp); err == nil {
-				eventModel.CreatedAt = t
+			err = batch.AppendStruct(&eventModel)
+			if err != nil {
+				log.Printf("Error appending event to batch: %v", err)
 			}
 		}
 
-		err = batch.AppendStruct(&eventModel)
-		if err != nil {
-			log.Printf("Error appending event to batch: %v", err)
+		if err := batch.Send(); err != nil {
+			log.Printf("Failed to flush events: %v", err)
+			return err
 		}
-	}
-
-	if err := batch.Send(); err != nil {
-		log.Printf("Failed to flush events: %v", err)
-		return err
-	}
-
-	b.items = make([]interface{}, 0)
-	return nil
-}
-
-func parseRevenue(v interface{}) float64 {
-	if v == nil {
-		return 0
-	}
-	switch val := v.(type) {
-	case float64:
-		return val
-	case float32:
-		return float64(val)
-	case int:
-		return float64(val)
-	case int64:
-		return float64(val)
-	case string:
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f
-		}
-	}
-	return 0
-}
-
-func parseDuration(v interface{}) uint64 {
-	if v == nil {
-		return 0
-	}
-	switch val := v.(type) {
-	case float64:
-		return uint64(val)
-	case int:
-		return uint64(val)
-	case int64:
-		return uint64(val)
-	case string:
-		if i, err := strconv.ParseUint(val, 10, 64); err == nil {
-			return i
-		}
-	}
-	return 0
-}
-
-func strOrEmpty(m map[string]interface{}, key string) string {
-	if val, ok := m[key].(string); ok {
-		return val
-	}
-	return ""
+		return nil
+	})
 }

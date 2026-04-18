@@ -1,4 +1,4 @@
-package services
+package enrich
 
 import (
 	"crypto/sha256"

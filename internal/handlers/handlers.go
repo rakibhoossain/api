@@ -6,18 +6,21 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/openpanel-dev/openpanel-api/internal/buffers"
+	"github.com/openpanel-dev/openpanel-api/internal/services"
 	"github.com/openpanel-dev/openpanel-api/internal/websocket"
 )
 
 type API struct {
-	router  *chi.Mux
-	buffers *buffers.Buffers
+	router    *chi.Mux
+	buffers   *buffers.Buffers
+	ingestion *services.IngestionService
 }
 
-func NewAPI(b *buffers.Buffers) *API {
+func NewAPI(b *buffers.Buffers, ingestion *services.IngestionService) *API {
 	api := &API{
-		router:  chi.NewRouter(),
-		buffers: b,
+		router:    chi.NewRouter(),
+		buffers:   b,
+		ingestion: ingestion,
 	}
 	api.setupRoutes()
 	return api

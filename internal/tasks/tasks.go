@@ -17,7 +17,14 @@ const (
 	TypeFlushSessions        = "cron:flushSessions"
 	TypeFlushProfileBackfill = "cron:flushProfileBackfill"
 	TypeFlushReplay          = "cron:flushReplay"
+	TypeSessionEnd           = "session:end"
 )
+
+type SessionEndPayload struct {
+	ProjectID string `json:"projectId"`
+	DeviceID  string `json:"deviceId"`
+	SessionID string `json:"sessionId"`
+}
 
 type FlushPayload struct {
 	// Add parameters if required

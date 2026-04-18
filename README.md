@@ -116,6 +116,61 @@ go mod tidy
 go run cmd/server/main.go
 ```
 
+## Testing with cURL
+
+Once the server is running, you can manually trigger events using `cURL`. 
+
+**1. Track an Event:**
+```sh
+curl -X POST http://localhost:3334/track \
+  -H "Content-Type: application/json" \
+  -H "OpenPanel-Project-Id: test-project-id" \
+  -d '{
+    "type": "track",
+    "payload": {
+      "name": "button_click",
+      "properties": {
+        "button_name": "checkout",
+        "__path": "/cart"
+      }
+    }
+  }'
+```
+
+**2. Track a Revenue Event:**
+```sh
+curl -X POST http://localhost:3334/track \
+  -H "Content-Type: application/json" \
+  -H "OpenPanel-Project-Id: test-project-id" \
+  -d '{
+    "type": "track",
+    "payload": {
+      "name": "revenue",
+      "properties": {
+        "__revenue": 99.99,
+        "currency": "USD"
+      }
+    }
+  }'
+```
+
+**3. Identify a User Profile:**
+```sh
+curl -X POST http://localhost:3334/track \
+  -H "Content-Type: application/json" \
+  -H "OpenPanel-Project-Id: test-project-id" \
+  -d '{
+    "type": "identify",
+    "payload": {
+      "profileId": "user_123",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com"
+    }
+  }'
+```
+
+
 Or with Docker:
 ```bash
 docker-compose up -d
